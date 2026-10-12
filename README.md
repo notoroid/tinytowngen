@@ -128,6 +128,3 @@ C*
 TXT
 tinytowngen -o city.png -l @town.txt
 ```
-
-## 改善の進め方
-Claude Code で `/nextStep` を実行すると、[BACKLOG.md](BACKLOG.md) から次の改善を 1 つ選んで実装・検証します。
