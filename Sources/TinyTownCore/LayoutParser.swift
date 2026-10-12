@@ -1,13 +1,72 @@
 import Foundation
 
 /// Parses the layout string, e.g. `"U3{0,0} C{3-12,0-6} F{4} W{3,0-2} B{5,5}#1 C*"`.
+///
+/// The layout may span several lines. A word starting with `#` begins a comment
+/// that runs to the end of the line; `#n` attached to a token is a variant.
+/// A word starting with `@` is a directive (`@grid WxH`, `@seed N`, `@border`) whose
+/// value, if any, is the next word on the same line.
 public enum LayoutParser {
     public static func parse(_ text: String) throws -> [Placement] {
-        let tokens = text
-            .split(whereSeparator: { $0 == ";" || $0.isWhitespace })
-            .map(String.init)
-        guard !tokens.isEmpty else { throw TownError.usage("layout is empty") }
-        return try tokens.map(parseToken)
+        try parseDocument(text).placements
+    }
+
+    public static func parseDocument(_ text: String) throws -> LayoutDocument {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        var doc = LayoutDocument()
+        for (i, line) in lines.enumerated() {
+            let words = line.split(whereSeparator: { $0 == ";" || $0.isWhitespace }).map(String.init)
+            var w = 0
+            do {
+                while w < words.count {
+                    let word = words[w]
+                    if word.hasPrefix("#") { break }
+                    if word.hasPrefix("@") {
+                        let value = w + 1 < words.count && !words[w + 1].hasPrefix("#") ? words[w + 1] : nil
+                        if try applyDirective(word, value: value, to: &doc.settings) { w += 1 }
+                    } else {
+                        doc.placements.append(try parseToken(word))
+                    }
+                    w += 1
+                }
+            } catch let error as TownError where lines.count > 1 {
+                throw TownError.atLine(i + 1, error)
+            }
+        }
+        guard !doc.placements.isEmpty else { throw TownError.usage("layout is empty") }
+        return doc
+    }
+
+    /// Applies one directive. Returns true if it consumed `value`.
+    static func applyDirective(_ name: String, value: String?, to s: inout LayoutSettings) throws -> Bool {
+        func need(_ example: String) throws -> String {
+            guard let value else { throw TownError.syntax(token: name, "needs a value, e.g. '\(name) \(example)'") }
+            return value
+        }
+        func once(_ isSet: Bool) throws {
+            if isSet { throw TownError.syntax(token: name, "given more than once") }
+        }
+        switch name {
+        case "@grid":
+            try once(s.grid != nil)
+            let v = try need("13x7")
+            do { s.grid = try GridSize(parsing: v) } catch {
+                throw TownError.syntax(token: "\(name) \(v)", "grid must look like WxH with positive integers")
+            }
+            return true
+        case "@seed":
+            try once(s.seed != nil)
+            let v = try need("5")
+            guard let n = Int(v), n >= 1 else { throw TownError.syntax(token: "\(name) \(v)", "seed must be an integer >= 1") }
+            s.seed = n
+            return true
+        case "@border":
+            try once(s.border)
+            s.border = true
+            return false
+        default:
+            throw TownError.syntax(token: name, "unknown directive (use @grid WxH, @seed N, @border)")
+        }
     }
 
     static func parseToken(_ token: String) throws -> Placement {

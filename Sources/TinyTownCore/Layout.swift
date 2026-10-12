@@ -1,6 +1,6 @@
 import Foundation
 
-public enum TownError: Error, Equatable, CustomStringConvertible {
+public indirect enum TownError: Error, Equatable, CustomStringConvertible {
     case usage(String)
     case syntax(token: String, String)
     case outOfBounds(token: String, String)
@@ -8,6 +8,8 @@ public enum TownError: Error, Equatable, CustomStringConvertible {
     case parkCrossesLine(park: String, line: String)
     case resource(String)
     case output(String)
+    /// Wraps a syntax error with its 1-based line number in a multi-line layout.
+    case atLine(Int, TownError)
 
     public var description: String {
         switch self {
@@ -18,6 +20,7 @@ public enum TownError: Error, Equatable, CustomStringConvertible {
         case .parkCrossesLine(let p, let l): "conflict: urban forest '\(p)' cannot be crossed by '\(l)'"
         case .resource(let m): "resource error: \(m)"
         case .output(let m): "output error: \(m)"
+        case .atLine(let n, let e): "line \(n): \(e)"
         }
     }
 }
@@ -58,6 +61,20 @@ public enum PlacementKind: Equatable, Sendable {
         case .waterway: "W"
         }
     }
+}
+
+/// Render settings written inside a layout with `@grid`, `@seed`, `@border`.
+/// Command-line options take precedence over them.
+public struct LayoutSettings: Equatable, Sendable {
+    public var grid: GridSize?
+    public var seed: Int?
+    public var border = false
+}
+
+/// A parsed layout: placements plus any settings directives.
+public struct LayoutDocument: Equatable, Sendable {
+    public var placements: [Placement] = []
+    public var settings = LayoutSettings()
 }
 
 /// An inclusive integer range written as `n` or `a-b`.

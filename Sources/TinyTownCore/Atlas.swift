@@ -36,6 +36,12 @@ public struct ParkSize: Hashable, Sendable, CustomStringConvertible {
     public var description: String { w == h ? "U\(w)" : "U\(w)x\(h)" }
 }
 
+/// An urban-forest sprite, possibly drawn rotated 90° clockwise.
+public struct ParkSprite: Equatable, Sendable {
+    public var source: AtlasRect
+    public var rotated: Bool
+}
+
 /// Sprite catalog built from the embedded atlas and tiles.json.
 public struct Atlas: Sendable {
     public let image: Bitmap
@@ -114,6 +120,19 @@ public struct Atlas: Sendable {
         self.boulevard = boulevard
         self.canal = canal
         self.canalShort = canalShort
+    }
+
+    /// The sprite for an urban forest of `size`. A non-square piece also serves its transposed
+    /// size by drawing it rotated 90° clockwise (e.g. the 1x2 piece gives U2x1).
+    public func parkSprite(for size: ParkSize) -> ParkSprite? {
+        if let rect = parks[size] { return ParkSprite(source: rect, rotated: false) }
+        if let rect = parks[ParkSize(w: size.h, h: size.w)] { return ParkSprite(source: rect, rotated: true) }
+        return nil
+    }
+
+    /// Every forest size that `parkSprite(for:)` can serve.
+    public var parkSizes: [ParkSize] {
+        Set(parks.keys.flatMap { [$0, ParkSize(w: $0.h, h: $0.w)] }).sorted { ($0.w, $0.h) < ($1.w, $1.h) }
     }
 
     /// Number of selectable variants for a placement kind (nil if the kind has no variants).

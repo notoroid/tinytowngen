@@ -11,7 +11,7 @@ public struct Plan: Equatable {
     public struct Park: Equatable {
         public var x, y: Int
         public var size: ParkSize
-        public var source: AtlasRect
+        public var sprite: ParkSprite
     }
     public struct Line: Equatable {
         public var kind: PlacementKind  // .firebreak or .waterway
@@ -91,8 +91,8 @@ public enum Planner {
                     }
                 }
             case .park(let size):
-                guard let rect = atlas.parks[size] else {
-                    let avail = atlas.parks.keys.sorted { ($0.w, $0.h) < ($1.w, $1.h) }.map(\.description)
+                guard let sprite = atlas.parkSprite(for: size) else {
+                    let avail = atlas.parkSizes.map(\.description)
                     throw TownError.syntax(token: p.token,
                         "no urban forest of size \(size.w)x\(size.h); available: \(avail.joined(separator: ", "))")
                 }
@@ -102,7 +102,7 @@ public enum Planner {
                 for yy in y..<y + size.h {
                     for xx in x..<x + size.w { try claim(xx, yy, Quadrants.full, p.token) }
                 }
-                plan.parks.append(.init(x: x, y: y, size: size, source: rect))
+                plan.parks.append(.init(x: x, y: y, size: size, sprite: sprite))
             case .firebreak, .waterway:
                 let isF = p.kind == .firebreak
                 let lineCount = isF ? grid.height : grid.width

@@ -1,7 +1,4 @@
 import Foundation
-import CoreGraphics
-import ImageIO
-import UniformTypeIdentifiers
 
 /// RGBA8 premultiplied pixel buffer, row 0 at the top.
 public struct Bitmap: Sendable {
@@ -17,23 +14,7 @@ public struct Bitmap: Sendable {
     }
 
     init(pngData: Data) throws {
-        guard let src = CGImageSourceCreateWithData(pngData as CFData, nil),
-              let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
-            throw TownError.resource("cannot decode atlas PNG")
-        }
-        self.init(width: img.width, height: img.height)
-        let ok = pixels.withUnsafeMutableBytes { buf -> Bool in
-            guard let ctx = Bitmap.context(buf.baseAddress, width, height) else { return false }
-            ctx.draw(img, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        if !ok { throw TownError.resource("cannot create bitmap context") }
-    }
-
-    private static func context(_ data: UnsafeMutableRawPointer?, _ w: Int, _ h: Int) -> CGContext? {
-        CGContext(data: data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        self = try PNGDecoder.decode(pngData)
     }
 
     public func pixel(_ x: Int, _ y: Int) -> RGBA {
@@ -120,6 +101,20 @@ public struct Bitmap: Sendable {
         pixels[i + 3] = UInt8(Int(c.a) + Int(pixels[i + 3]) * inv / 255)
     }
 
+    /// The `src` region turned 90° clockwise: a w x h region becomes h x w,
+    /// and the region's bottom-left pixel becomes the result's top-left.
+    public func rotatedClockwise(_ src: AtlasRect) -> Bitmap {
+        var out = Bitmap(width: src.h, height: src.w)
+        for y in 0..<out.height {
+            for x in 0..<out.width {
+                let c = pixel(src.x + y, src.y + src.h - 1 - x)
+                let d = (y * out.width + x) * 4
+                out.pixels[d] = c.r; out.pixels[d + 1] = c.g; out.pixels[d + 2] = c.b; out.pixels[d + 3] = c.a
+            }
+        }
+        return out
+    }
+
     /// Integer nearest-neighbour upscale.
     public func scaled(by factor: Int) -> Bitmap {
         guard factor > 1 else { return self }
@@ -135,17 +130,10 @@ public struct Bitmap: Sendable {
     }
 
     public func writePNG(to url: URL) throws {
-        var copy = pixels
-        let image: CGImage? = copy.withUnsafeMutableBytes { buf in
-            Bitmap.context(buf.baseAddress, width, height)?.makeImage()
-        }
-        guard let image,
-              let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-            throw TownError.output("cannot create PNG at \(url.path)")
-        }
-        CGImageDestinationAddImage(dest, image, nil)
-        guard CGImageDestinationFinalize(dest) else {
-            throw TownError.output("failed to write PNG to \(url.path)")
+        do {
+            try PNGEncoder.encode(self).write(to: url)
+        } catch {
+            throw TownError.output("failed to write PNG to \(url.path): \(error.localizedDescription)")
         }
     }
 }

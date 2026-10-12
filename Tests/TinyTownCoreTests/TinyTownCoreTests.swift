@@ -1,7 +1,8 @@
+import Foundation
 import Testing
 @testable import TinyTownCore
 
-private let atlas = try! Atlas.loadEmbedded()
+let atlas = try! Atlas.loadEmbedded()
 private let grid = GridSize(width: 13, height: 7)
 
 private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws -> Plan {
@@ -18,6 +19,8 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         #expect(atlas.buildings.count == 2)
         #expect(CLI.helpText.contains("C=63, CL=12, CR=12, CT=20, CB=20, B=2"))
         #expect(Set(atlas.parks.keys.map(\.description)) == ["U1", "U2", "U3", "U1x2"])
+        #expect(atlas.parkSizes.map(\.description) == ["U1", "U1x2", "U2x1", "U2", "U3"])
+        #expect(CLI.helpText.contains("Sizes: U1, U2, U3, U1x2, U2x1"))
     }
 }
 
@@ -42,6 +45,176 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         #expect(try GridSize(parsing: "13x7") == GridSize(width: 13, height: 7))
         #expect(throws: TownError.self) { try GridSize(parsing: "13*7") }
         #expect(throws: TownError.self) { try GridSize(parsing: "0x7") }
+    }
+}
+
+@Suite struct LayoutTextTests {
+    @Test func multiLineWithComments() throws {
+        let text = """
+        # parks
+        U3{0,0}   # big one
+        F{3}; C{5,5}#2
+        #C{6,6}
+        C*
+        """
+        let p = try LayoutParser.parse(text)
+        #expect(p.map(\.token) == ["U3{0,0}", "F{3}", "C{5,5}#2", "C*"])
+        #expect(p[2].variant == 2)
+    }
+
+    @Test func spacedHashIsCommentNotVariant() throws {
+        let p = try LayoutParser.parse("C{1,2} #3 C{0,0}")
+        #expect(p.count == 1 && p[0].variant == nil)
+    }
+
+    @Test func syntaxErrorsCarryLineNumber() {
+        #expect(throws: TownError.atLine(2, .syntax(token: "Z{1,1}",
+                "unknown pattern 'Z' (use C, CL, CR, CT, CB, B, Un, UWxH, F, W)"))) {
+            try LayoutParser.parse("C{0,0}\nZ{1,1}")
+        }
+        // Single-line layouts keep the plain error.
+        #expect(throws: TownError.syntax(token: "Z{1,1}",
+                "unknown pattern 'Z' (use C, CL, CR, CT, CB, B, Un, UWxH, F, W)")) {
+            try LayoutParser.parse("C{0,0} Z{1,1}")
+        }
+    }
+
+    @Test func commentsOnlyIsEmpty() {
+        #expect(throws: TownError.usage("layout is empty")) { try LayoutParser.parse("# nothing\n\n") }
+    }
+
+    @Test func loadLayoutSources() throws {
+        #expect(try CLI.loadLayout("C*") == "C*")
+        #expect(try CLI.loadLayout("@-", stdin: { Data("U2{0,0}\nC*".utf8) }) == "U2{0,0}\nC*")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tinytowngen-\(UUID()).txt")
+        try "B{0,0}\n".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(try CLI.loadLayout("@" + url.path) == "B{0,0}\n")
+        #expect(throws: TownError.self) { try CLI.loadLayout("@/nonexistent/layout.txt") }
+    }
+
+    @Test func exitCodes() throws {
+        #expect(CLI.run(["-l", "@/nonexistent/layout.txt", "-o", "/dev/null"]) == 2)
+        #expect(CLI.run(["-l", "# empty", "-o", "/dev/null"]) == 2)
+        #expect(CLI.run(["-l", "C{99,0}", "-o", "/dev/null"]) == 1)
+    }
+}
+
+@Suite struct VariantSheetTests {
+    private func tile(_ img: Bitmap, _ ox: Int, _ oy: Int) -> [RGBA] {
+        (oy..<oy + 19).flatMap { y in (ox..<ox + 19).map { img.pixel($0, y) } }
+    }
+
+    @Test func sheetSize() {
+        let c = VariantSheet.render(.commercial, atlas: atlas)    // 63 -> 8 cols x 8 rows
+        #expect(c.width == 2 + 8 * 21 && c.height == 2 + 8 * 27)
+        let b = VariantSheet.render(.building, atlas: atlas)      // 2 -> 2 cols x 1 row
+        #expect(b.width == 2 + 2 * 21 && b.height == 2 + 27)
+    }
+
+    @Test(arguments: ["C", "CL", "CR", "CT", "CB", "B"])
+    func sheetCellMatchesLayoutVariant(_ name: String) throws {
+        // Cell #n on the sheet must look exactly like P{0,0}#n in a town.
+        let kind = try VariantSheet.parseKind(name)
+        let sheet = VariantSheet.render(kind, atlas: atlas)
+        let n = atlas.variantCount(for: kind)! - 1
+        let town = Renderer.render(try plan("\(name){0,0}#\(n)", grid: GridSize(width: 1, height: 1)), atlas: atlas)
+        let ox = 2 + (n % 8) * 21, oy = 2 + (n / 8) * 27
+        #expect(tile(sheet, ox, oy) == tile(town, 0, 0))
+    }
+
+    @Test func labelsAreDrawn() {
+        let sheet = VariantSheet.render(.building, atlas: atlas)
+        // "0" centered under cell 0: glyph x=10..12, y=22..26; its center pixel is unlit.
+        #expect(sheet.pixel(10, 22) == VariantSheet.labelColor)
+        #expect(sheet.pixel(11, 24) == VariantSheet.background)
+        #expect(sheet.pixel(12, 26) == VariantSheet.labelColor)
+    }
+
+    @Test func allSheetStacksEverySection() throws {
+        let kinds = VariantSheet.allKinds.map(\.kind)
+        let sheet = VariantSheet.render(kinds, atlas: atlas)
+        var y = 0
+        for kind in kinds {
+            let section = VariantSheet.render(kind, atlas: atlas)
+            // Header: first glyph column of the name is lit in the header colour.
+            #expect(sheet.pixel(2, y + 2) == VariantSheet.headerColor)
+            y += 2 + 5
+            for sy in 0..<section.height {
+                for sx in 0..<section.width { #expect(sheet.pixel(sx, y + sy) == section.pixel(sx, sy)) }
+            }
+            y += section.height
+        }
+        #expect(sheet.height == y && sheet.width == 2 + 8 * 21)
+    }
+
+    @Test func singlePatternSheetIsUnchanged() {
+        #expect(VariantSheet.render([.half(.top)], atlas: atlas).pixels == VariantSheet.render(.half(.top), atlas: atlas).pixels)
+    }
+
+    @Test func everyPatternNameHasGlyphs() {
+        for (name, kind) in VariantSheet.allKinds {
+            #expect(name == kind.orderKey)
+            for ch in name { #expect(VariantSheet.glyphs[ch] != nil, "missing glyph \(ch)") }
+        }
+    }
+
+    @Test func options() throws {
+        let o = try CLIOptions.parse(["--list-variants", "CT", "-o", "s.png"])
+        #expect(o.listVariants == [.half(.top)] && o.layout == nil)
+        #expect(try CLIOptions.parse(["--list-variants", "all", "-o", "s.png"]).listVariants?.count == 6)
+        #expect(throws: TownError.self) { try CLIOptions.parse(["--list-variants", "ALL", "-o", "s.png"]) }
+        #expect(throws: TownError.self) { try CLIOptions.parse(["--list-variants", "U2", "-o", "s.png"]) }
+        #expect(throws: TownError.self) { try CLIOptions.parse(["--list-variants", "C"]) }
+        #expect(throws: TownError.self) { try CLIOptions.parse(["--list-variants", "C", "-l", "C*", "-o", "s.png"]) }
+    }
+}
+
+@Suite struct BorderTests {
+    private let g = GridSize(width: 3, height: 3)
+    private func render(_ layout: String, border: Bool) throws -> Bitmap {
+        Renderer.render(try plan(layout, grid: g), atlas: atlas, border: border)
+    }
+
+    @Test func canvasGrowsByOuterRoad() throws {
+        let img = try render("C*", border: true)
+        #expect(img.width == 3 * 21 + 2 && img.height == 3 * 21 + 2)
+        #expect(Metrics.canvasSize(GridSize(width: 13, height: 7), margin: 2) == (275, 149))
+        for (x, y) in [(0, 0), (1, 30), (64, 64), (30, 64), (64, 1)] {
+            #expect(img.pixel(x, y) == Metrics.roadColor)
+        }
+    }
+
+    @Test func tilesShiftByTwo() throws {
+        let plain = try render("C{0,0}", border: false), framed = try render("C{0,0}", border: true)
+        for y in 0..<19 { for x in 0..<19 { #expect(framed.pixel(x + 2, y + 2) == plain.pixel(x, y)) } }
+    }
+
+    // With --border, road row 1 is y=21..22 and the F{1} band y=15..28; road column 2 is x=42..43
+    // and its canal band x=40..45. A single pixel of sprite may happen to equal the road color,
+    // so check whole cross-sections of the band.
+    private func isRoad(_ img: Bitmap, xs: Range<Int>, ys: Range<Int>) -> Bool {
+        ys.allSatisfy { y in xs.allSatisfy { img.pixel($0, y) == Metrics.roadColor } }
+    }
+
+    @Test func linesReachingGridEdgeCrossOuterRoad() throws {
+        let img = try render("F{1} W{2,1-2}", border: true)
+        #expect(!isRoad(img, xs: 0..<1, ys: 15..<29))                          // F at left edge
+        #expect(!isRoad(img, xs: img.width - 1..<img.width, ys: 15..<29))     // F at right edge
+        #expect(!isRoad(img, xs: 40..<46, ys: img.height - 1..<img.height))   // W reaches bottom edge
+        #expect(isRoad(img, xs: 40..<46, ys: 0..<1))                          // W starts inside: no extension
+    }
+
+    @Test func partialLinesAndShortCanalStayInside() throws {
+        let img = try render("F{1,1-2} W{1,2-2}", border: true)
+        #expect(isRoad(img, xs: 0..<1, ys: 15..<29))                          // F starts at column 1
+        #expect(!isRoad(img, xs: img.width - 1..<img.width, ys: 15..<29))     // ...but reaches the right edge
+        #expect(isRoad(img, xs: 19..<25, ys: img.height - 1..<img.height))   // single-tile canal not extended
+    }
+
+    @Test func option() throws {
+        #expect(try CLIOptions.parse(["-l", "C*", "-o", "a.png", "--border"]).border)
+        #expect(try !CLIOptions.parse(["-l", "C*", "-o", "a.png"]).border)
     }
 }
 
@@ -71,6 +244,11 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         #expect(try plan("U3{0,0} F{3} W{3}").lines.count == 2)
         #expect(try plan("U2{0,0} W{1,3-6}").parks.count == 1)
         #expect(try plan("U1x2{0,0} W{1}").parks.count == 1)
+        // U2x1 spans road column 1 but no road row.
+        #expect(throws: TownError.parkCrossesLine(park: "U2x1{0,0}", line: "W{1,0-6}")) { try plan("U2x1{0,0} W{1}") }
+        #expect(try plan("U2x1{0,1} F{1} F{2} W{2}").parks.count == 1)
+        #expect(throws: TownError.self) { try plan("U2x1{12,0}") }
+        #expect(throws: TownError.self) { try plan("U2x1{0,0} C{1,0}") }
     }
 
     @Test func seedFormula() throws {
@@ -116,16 +294,42 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         for y in 21..<40 { #expect(canalColumn(img, y: y) == canalColumn(want, y: y)) }
     }
 
+    private func capSource(_ rows: Range<Int>) -> AtlasRect {
+        AtlasRect(x: atlas.canal.x, y: atlas.canal.y + rows.lowerBound, w: atlas.canal.w, h: rows.count)
+    }
+
     @Test func partialWaterwayIsCappedOnlyInsideGrid() throws {
         let img = Renderer.render(try plan("W{1,0-1}", grid: GridSize(width: 3, height: 3)), atlas: atlas)
-        let s = atlas.canalShort
-        let capH = Metrics.canalCapBottom
-        let bottomCap = expected(AtlasRect(x: s.x, y: s.y + s.h - capH, w: s.w, h: capH), dy: 40 - capH, dh: capH)
+        let capH = Metrics.canalCapBottomRows.count
+        let bottomCap = expected(capSource(Metrics.canalCapBottomRows), dy: 40 - capH, dh: capH)
         for y in (40 - capH)..<40 { #expect(canalColumn(img, y: y) == canalColumn(bottomCap, y: y)) }
         // Top end touches the image edge: plain canal body, no cap.
         let body = expected(atlas.canal, dy: 0, dh: 40, tiled: true)
-        for y in 0..<Metrics.canalCapTop { #expect(canalColumn(img, y: y) == canalColumn(body, y: y)) }
+        for y in 0..<Metrics.canalCapTopRows.count { #expect(canalColumn(img, y: y) == canalColumn(body, y: y)) }
     }
+
+    @Test func topCapComesFromCanalItself() throws {
+        let img = Renderer.render(try plan("W{1,1-2}", grid: GridSize(width: 3, height: 3)), atlas: atlas)
+        let capH = Metrics.canalCapTopRows.count
+        let topCap = expected(capSource(Metrics.canalCapTopRows), dy: 21, dh: capH)
+        for y in 21..<21 + capH { #expect(canalColumn(img, y: y) == canalColumn(topCap, y: y)) }
+    }
+
+    @Test func capsUseCanalPaletteAndHaveNoOpenWater() {
+        // Caps must look like canal_N's stone (same colours) and close the green channel.
+        let c = atlas.canal
+        var palette = Set<UInt32>()
+        for y in c.y..<c.y + c.h { for x in c.x..<c.x + c.w { palette.insert(key(atlas.image.pixel(x, y))) } }
+        for rows in [Metrics.canalCapTopRows, Metrics.canalCapBottomRows] {
+            for y in rows { for x in c.x..<c.x + c.w {
+                let p = atlas.image.pixel(x, c.y + y)
+                #expect(palette.contains(key(p)))
+                #expect(!(Int(p.g) > Int(p.r) + 8 && Int(p.g) > Int(p.b) + 8), "green water at cap row \(y)")
+            } }
+        }
+    }
+
+    private func key(_ p: RGBA) -> UInt32 { UInt32(p.r) << 16 | UInt32(p.g) << 8 | UInt32(p.b) }
 
     private func region(_ img: Bitmap, _ x: Int, _ y: Int, _ w: Int, _ h: Int) -> [RGBA] {
         (y..<y + h).flatMap { yy in (x..<x + w).map { img.pixel($0, yy) } }
@@ -140,6 +344,30 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         cropped.blitFit(atlas.image, src, dx: 0, dy: 0, dw: 19, dh: 40)
         #expect(region(img, 0, 0, 19, 40) == region(scaled, 0, 0, 19, 40))
         #expect(region(img, 0, 0, 19, 40) != region(cropped, 0, 0, 19, 40))
+    }
+
+    @Test func rotatedClockwise() {
+        // 2 wide x 3 tall, values encode (x, y) in the red channel.
+        var b = Bitmap(width: 2, height: 3)
+        for y in 0..<3 { for x in 0..<2 { b.fillRect(x: x, y: y, w: 1, h: 1, color: RGBA(UInt8(10 * x + y), 0, 0)) } }
+        let r = b.rotatedClockwise(AtlasRect(x: 0, y: 0, w: 2, h: 3))
+        #expect(r.width == 3 && r.height == 2)
+        // Top row of the result is the source's left column read bottom-up.
+        #expect([r.pixel(0, 0).r, r.pixel(1, 0).r, r.pixel(2, 0).r] == [2, 1, 0])
+        #expect([r.pixel(0, 1).r, r.pixel(1, 1).r, r.pixel(2, 1).r] == [12, 11, 10])
+    }
+
+    @Test func wideParkIsRotatedTallPark() throws {
+        let sprite = try #require(atlas.parkSprite(for: ParkSize(w: 2, h: 1)))
+        #expect(sprite.rotated && sprite.source == atlas.parks[ParkSize(w: 1, h: 2)])
+        #expect(atlas.parkSprite(for: ParkSize(w: 1, h: 2))?.rotated == false)
+        #expect(atlas.parkSprite(for: ParkSize(w: 3, h: 1)) == nil)
+
+        let img = Renderer.render(try plan("U2x1{0,0}", grid: GridSize(width: 2, height: 1)), atlas: atlas)
+        let turned = atlas.image.rotatedClockwise(sprite.source)
+        var want = Bitmap(width: 40, height: 19)
+        want.blitScaled(turned, AtlasRect(x: 0, y: 0, w: turned.width, h: turned.height), dx: 0, dy: 0, dw: 40, dh: 19)
+        #expect(region(img, 0, 0, 40, 19) == region(want, 0, 0, 40, 19))
     }
 
     @Test(arguments: [1, 2, 3])
@@ -165,7 +393,7 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
     private func bridgeCount(_ layout: String) throws -> Int {
         let p = try plan(layout, grid: GridSize(width: 4, height: 4))
         return Metrics.bridges(boulevards: p.lines.filter { $0.kind == .firebreak },
-                               waterways: p.lines.filter { $0.kind == .waterway }).count
+                               waterways: p.lines.filter { $0.kind == .waterway }, grid: p.grid).count
     }
 
     @Test func bridgesOnlyWhereCanalContinuesAcross() throws {
@@ -206,5 +434,71 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         #expect(throws: TownError.self) { try CLIOptions.parse(["-l", "C*"]) }
         #expect(throws: TownError.self) { try CLIOptions.parse(["-l", "C*", "-o", "a.png", "-s", "0"]) }
         #expect(try CLIOptions.parse(["--help"]).help)
+    }
+}
+
+@Suite struct DirectiveTests {
+    @Test func parsesDirectivesAnywhere() throws {
+        let doc = try LayoutParser.parseDocument("""
+        @grid 4x3 @seed 5   # settings
+        U2{0,0}; @border
+        C*
+        """)
+        #expect(doc.settings == LayoutSettings(grid: GridSize(width: 4, height: 3), seed: 5, border: true))
+        #expect(doc.placements.map(\.token) == ["U2{0,0}", "C*"])
+        let inline = try LayoutParser.parseDocument("C* @seed 3")
+        #expect(inline.settings.seed == 3 && inline.settings.grid == nil && !inline.settings.border)
+    }
+
+    @Test(arguments: ["@grid C*", "@grid 0x3 C*", "@seed C*", "@seed 0 C*", "@size 3x3 C*",
+                      "@seed 1 @seed 2 C*", "@border @border C*", "C* @grid"])
+    func rejectsBadDirectives(_ layout: String) {
+        #expect(throws: TownError.self) { try LayoutParser.parseDocument(layout) }
+    }
+
+    @Test func directiveErrorsCarryLineNumber() {
+        #expect(throws: TownError.atLine(2, .syntax(token: "@seed", "given more than once"))) {
+            try LayoutParser.parseDocument("@seed 1\n@seed 2\nC*")
+        }
+    }
+
+    @Test func directiveValueStopsAtComment() {
+        #expect(throws: TownError.self) { try LayoutParser.parseDocument("@seed #5\nC*") }
+    }
+
+    @Test func directivesAloneAreEmpty() {
+        #expect(throws: TownError.usage("layout is empty")) { try LayoutParser.parseDocument("@grid 3x3 @border") }
+    }
+
+    @Test func commandLineWinsOverDirectives() throws {
+        let s = LayoutSettings(grid: GridSize(width: 4, height: 3), seed: 5, border: true)
+        var o = CLIOptions()
+        #expect(CLI.resolve(o, s) == (GridSize(width: 4, height: 3), 5, true))
+        o.grid = GridSize(width: 2, height: 2); o.seed = 9
+        #expect(CLI.resolve(o, s) == (GridSize(width: 2, height: 2), 9, true))
+        #expect(CLI.resolve(CLIOptions(), LayoutSettings()) == (GridSize(width: 13, height: 7), 1, false))
+        o.border = true
+        #expect(CLI.resolve(o, LayoutSettings()).border)
+    }
+
+    @Test func inlineLayoutStartingWithDirectiveIsNotAFile() throws {
+        #expect(try CLI.loadLayout("@grid 4x3 C*") == "@grid 4x3 C*")
+        #expect(throws: TownError.self) { try CLI.loadLayout("@/nonexistent/file.txt") }
+    }
+
+    @Test func helpShowsEscapedNewlineInExample() {
+        // The printf example must stay on one line (a raw \n in the Swift literal would break it).
+        #expect(CLI.helpText.contains(#"printf 'U2{0,0}\nC*' | tinytowngen"#))
+    }
+
+    @Test func fileWithDirectivesReproducesCommandLineRender() throws {
+        let fromFile = try LayoutParser.parseDocument("@grid 5x3 @seed 4 @border\nU2{0,0} F{2} C*")
+        let (g, seed, border) = CLI.resolve(CLIOptions(), fromFile.settings)
+        let a = Renderer.render(try Planner.plan(fromFile.placements, grid: g, seed: seed, atlas: atlas),
+                                atlas: atlas, border: border)
+        let b = Renderer.render(try Planner.plan(LayoutParser.parse("U2{0,0} F{2} C*"),
+                                                 grid: GridSize(width: 5, height: 3), seed: 4, atlas: atlas),
+                                atlas: atlas, border: true)
+        #expect(a.pixels == b.pixels)
     }
 }
