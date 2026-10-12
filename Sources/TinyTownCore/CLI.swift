@@ -92,7 +92,7 @@ public enum CLI {
       -g, --grid <WxH>       Grid size in tiles. Default: layout's @grid, else 13x7.
       -s, --seed <int>       Seed (>= 1) for picking C/CL/CR/CT/CB/B variants.
                              Default: layout's @seed, else 1.
-          --border           Also draw a 2 px road around the outside of the grid
+          --border           Also draw a 1 px road around the outside of the grid
                              (also enabled by @border in the layout).
           --scale <int>      Integer nearest-neighbour upscale of the output (1-32). Default: 1.
       -v, --verbose          Print every resolved placement (and its variant) to stderr.
@@ -105,11 +105,11 @@ public enum CLI {
       -h, --help             Show this help.
 
     GEOMETRY
-      Tiles are 19x19 px separated by 2 px roads (#777777). Tile {x,y} is
-      0-based from the top-left; its pixel origin is (x*21, y*21).
-      Image size = (W*21-2) x (H*21-2) px, e.g. 13x7 -> 271x145.
-      With --border every pixel position shifts by +2 and the image is
-      (W*21+2) x (H*21+2) px, e.g. 13x7 -> 275x149. F/W lines that reach the
+      Tiles are 19x19 px separated by 1 px roads (#777777). Tile {x,y} is
+      0-based from the top-left; its pixel origin is (x*20, y*20).
+      Image size = (W*20-1) x (H*20-1) px, e.g. 13x7 -> 259x139.
+      With --border every pixel position shifts by +1 and the image is
+      (W*20+1) x (H*20+1) px, e.g. 13x7 -> 261x141. F/W lines that reach the
       grid edge then continue across the outer road to the image edge.
       Road lines are numbered 1..W-1 (vertical) and 1..H-1 (horizontal);
       road k lies between tile column/row k-1 and k.
