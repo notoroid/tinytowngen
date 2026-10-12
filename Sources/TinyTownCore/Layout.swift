@@ -79,6 +79,7 @@ public struct LayoutSettings: Equatable, Sendable {
     public var grid: GridSize?
     public var seed: Int?
     public var border = false
+    public var map: MapTheme?
 }
 
 /// A parsed layout: placements plus any settings directives.

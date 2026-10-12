@@ -22,6 +22,7 @@ import Testing
         var border = false
         /// Raster layout instead of `layout` (see `RasterLayout`).
         var raster: String? = nil
+        var map: MapTheme = .sapporo
         let hash: String
         var testDescription: String { name }
     }
@@ -29,7 +30,7 @@ import Testing
     static let cases: [Case] = [
         Case(name: "town", grid: GridSize(width: 13, height: 7), seed: 5,
              layout: "U3{0,0} U2{9,4} B{5,2} CL{6,2} CR{6,2}#3 F{3} W{4,4-6} C*", sheet: nil,
-             hash: "0ca54817a255b38c"),
+             hash: "b14eae5c715f109d"),
         Case(name: "halves", grid: GridSize(width: 3, height: 2), seed: 1,
              layout: "CL{0,0} CR{0,0} CT{1,0} CB{1,0} CL{2,1} C*", sheet: nil,
              hash: "4adb6fe8a6ccb878"),
@@ -47,7 +48,7 @@ import Testing
              hash: "9de5d2341eeb24bd"),
         Case(name: "border", grid: GridSize(width: 3, height: 3), seed: 2,
              layout: "F{1} W{1} W{2,2-2} U1{2,0} C*", sheet: nil, border: true,
-             hash: "0c93ac83cc2f319c"),
+             hash: "2ef2eabff801caa4"),
         Case(name: "sheet-CT", grid: GridSize(width: 1, height: 1), seed: 1,
              layout: nil, sheet: "CT",
              hash: "3994fba2515c4128"),
@@ -61,7 +62,14 @@ import Testing
              U0U0U0U0 C1C2 R0 C2C0
              U0U0U0U0 C4C3 R0 C4C0
              """,
-             hash: "b1fecbdd323a6f38"),
+             hash: "6a2d07fce63bc3fc"),
+        Case(name: "heian-town", grid: GridSize(width: 8, height: 5), seed: 2,
+             layout: "U3{0,0} U2{6,3} U1x2{3,3} F{3} W{5} B{4,0} B{0,4} CL{3,0} CR{3,0} CT{5,1} CB{5,1} C*",
+             sheet: nil, border: true, map: .heiankyo11c,
+             hash: "36ecaf9447177ea0"),
+        Case(name: "heian-sheet-all", grid: GridSize(width: 1, height: 1), seed: 1,
+             layout: nil, sheet: "all", map: .heiankyo11c,
+             hash: "95589a2e91fa6ec2"),
         Case(name: "sheet-all", grid: GridSize(width: 1, height: 1), seed: 1,
              layout: nil, sheet: "all",
              hash: "ca7095188b551222"),
@@ -71,7 +79,7 @@ import Testing
     static var updating: Bool { ProcessInfo.processInfo.environment["UPDATE_GOLDEN"] == "1" }
 
     static func render(_ c: Case) throws -> Bitmap {
-        let atlas = try Atlas.loadEmbedded()
+        let atlas = try Atlas.loadEmbedded(c.map)
         if let raster = c.raster {
             let placements = try RasterLayout.parse(raster, grid: c.grid, parkSizes: atlas.parkSizes)
             return Renderer.render(try Planner.plan(placements, grid: c.grid, seed: c.seed, atlas: atlas), atlas: atlas)

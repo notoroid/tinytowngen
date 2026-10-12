@@ -441,6 +441,20 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         for y in f.y + 1..<f.y + f.h - 1 { #expect(img.pixel(cx, y) == deck.pixel(cx, y)) }
     }
 
+    @Test(arguments: [("U1{0,0} F{1}", 1, 2), ("U1{0,0} W{1}", 2, 1), ("U2{0,0} F{2} W{2}", 3, 3)])
+    func linesAlongAForestLeaveItWhole(_ c: (String, Int, Int)) throws {
+        // A boulevard/waterway band spills 6-7 / 2-3 px off its road; along a forest that spill
+        // must not cover the forest, so the forest looks exactly as it does on its own.
+        let g = GridSize(width: c.1, height: c.2)
+        let forestOnly = c.0.split(separator: " ").filter { $0.hasPrefix("U") }.joined(separator: " ")
+        let with = Renderer.render(try plan(c.0, grid: g), atlas: atlas)
+        let without = Renderer.render(try plan(forestOnly, grid: g), atlas: atlas)
+        let n = forestOnly.hasPrefix("U2") ? 2 : 1
+        let span = Metrics.span(n)
+        #expect(region(with, 0, 0, span, span) == region(without, 0, 0, span, span))
+        #expect(with.pixels != without.pixels)  // the line is still drawn next to it
+    }
+
     @Test func boulevardReplacesRoad() throws {
         let img = Renderer.render(try plan("F{1}", grid: GridSize(width: 3, height: 2)), atlas: atlas)
         let roadY = Metrics.pitch - Metrics.road  // road row 1
@@ -495,10 +509,10 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
     @Test func commandLineWinsOverDirectives() throws {
         let s = LayoutSettings(grid: GridSize(width: 4, height: 3), seed: 5, border: true)
         var o = CLIOptions()
-        #expect(CLI.resolve(o, s) == (GridSize(width: 4, height: 3), 5, true))
+        #expect(CLI.resolve(o, s) == .init(grid: GridSize(width: 4, height: 3), seed: 5, border: true, map: .sapporo))
         o.grid = GridSize(width: 2, height: 2); o.seed = 9
-        #expect(CLI.resolve(o, s) == (GridSize(width: 2, height: 2), 9, true))
-        #expect(CLI.resolve(CLIOptions(), LayoutSettings()) == (GridSize(width: 13, height: 7), 1, false))
+        #expect(CLI.resolve(o, s) == .init(grid: GridSize(width: 2, height: 2), seed: 9, border: true, map: .sapporo))
+        #expect(CLI.resolve(CLIOptions(), LayoutSettings()) == .init(grid: GridSize(width: 13, height: 7), seed: 1, border: false, map: .sapporo))
         o.border = true
         #expect(CLI.resolve(o, LayoutSettings()).border)
     }
@@ -515,7 +529,8 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
 
     @Test func fileWithDirectivesReproducesCommandLineRender() throws {
         let fromFile = try LayoutParser.parseDocument("@grid 5x3 @seed 4 @border\nU2{0,0} F{2} C*")
-        let (g, seed, border) = CLI.resolve(CLIOptions(), fromFile.settings)
+        let r = CLI.resolve(CLIOptions(), fromFile.settings)
+        let (g, seed, border) = (r.grid, r.seed, r.border)
         let a = Renderer.render(try Planner.plan(fromFile.placements, grid: g, seed: seed, atlas: atlas),
                                 atlas: atlas, border: border)
         let b = Renderer.render(try Planner.plan(LayoutParser.parse("U2{0,0} F{2} C*"),

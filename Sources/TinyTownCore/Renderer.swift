@@ -9,14 +9,15 @@ public enum Metrics {
     /// (one pixel more on the bottom/right side, since the spill cannot split evenly around 1 px).
     public static let boulevardThickness = 14
     public static let canalThickness = 6
-    /// Rows of `canal_N` (relative to its top) where its green channel is closed off by stone:
+    /// Rows of the sapporo `canal_N` (relative to its top) where its green channel is closed off by stone:
     /// a closed north end and a closed south end. Used to cap partial waterways so the cap
     /// shares the canal's own colours.
     static let canalCapTopRows = 0..<3
     static let canalCapBottomRows = 16..<20
 
-    public static let roadColor = RGBA(hex: 0x777777)
-    public static let groundColor = RGBA(hex: 0x8A8272)
+    /// Colours of the default map; the renderer takes them from `atlas.theme`.
+    public static let roadColor = MapTheme.sapporo.roadColor
+    public static let groundColor = MapTheme.sapporo.groundColor
 
     /// Canvas size; `margin` is the outer road width (0, or `road` with --border).
     public static func canvasSize(_ g: GridSize, margin: Int = 0) -> (Int, Int) {
@@ -26,8 +27,8 @@ public enum Metrics {
     /// Pixel extent covered by `n` tiles plus the roads between them.
     static func span(_ n: Int) -> Int { n * tile + (n - 1) * road }
 
-    public static let parapetColor = RGBA(hex: 0xC9C5BA)
-    public static let bridgeShadowColor = RGBA(hex: 0x2E332C)
+    public static let parapetColor = MapTheme.sapporo.parapetColor
+    public static let bridgeShadowColor = MapTheme.sapporo.bridgeShadowColor
 
     /// Pixel rectangle drawn for a boulevard or waterway: its sprite band centered on the replaced road.
     /// With a margin (outer road), ends that reach the grid edge continue across it to the image edge.
@@ -92,13 +93,14 @@ public enum Renderer {
     public static func render(_ plan: Plan, atlas: Atlas, border: Bool = false) -> Bitmap {
         let m = border ? Metrics.road : 0
         let (w, h) = Metrics.canvasSize(plan.grid, margin: m)
-        var canvas = Bitmap(width: w, height: h, fill: Metrics.roadColor)
+        let theme = atlas.theme
+        var canvas = Bitmap(width: w, height: h, fill: theme.roadColor)
         let p = Metrics.pitch, t = Metrics.tile
 
         // Empty tiles show bare ground.
         for y in 0..<plan.grid.height {
             for x in 0..<plan.grid.width {
-                canvas.fillRect(x: m + x * p, y: m + y * p, w: t, h: t, color: Metrics.groundColor)
+                canvas.fillRect(x: m + x * p, y: m + y * p, w: t, h: t, color: theme.groundColor)
             }
         }
 
@@ -119,18 +121,6 @@ public enum Renderer {
             }
         }
 
-        for park in plan.parks {
-            let dw = Metrics.span(park.size.w), dh = Metrics.span(park.size.h)
-            if park.sprite.rotated {
-                let turned = atlas.image.rotatedClockwise(park.sprite.source)
-                canvas.blitScaled(turned, AtlasRect(x: 0, y: 0, w: turned.width, h: turned.height),
-                                  dx: m + park.x * p, dy: m + park.y * p, dw: dw, dh: dh)
-            } else {
-                canvas.blitScaled(atlas.image, park.sprite.source, dx: m + park.x * p, dy: m + park.y * p,
-                                  dw: dw, dh: dh)
-            }
-        }
-
         // Waterways first, then boulevards, which cross them on bridges.
         let waterways = plan.lines.filter { $0.kind == .waterway }
         let boulevards = plan.lines.filter { $0.kind == .firebreak }
@@ -147,13 +137,11 @@ public enum Renderer {
                              phaseY: band.y)
             // Ends inside the grid are closed off; ends at the image edge run out of frame.
             if line.span.lo > 0 {
-                let rows = Metrics.canalCapTopRows, h = rows.count
-                let cap = AtlasRect(x: atlas.canal.x, y: atlas.canal.y + rows.lowerBound, w: atlas.canal.w, h: h)
+                let cap = atlas.canalCapTop, h = cap.h
                 canvas.blitFit(atlas.image, cap, dx: band.x, dy: band.y, dw: band.w, dh: h)
             }
             if line.span.hi < plan.grid.height - 1 {
-                let rows = Metrics.canalCapBottomRows, h = rows.count
-                let cap = AtlasRect(x: atlas.canal.x, y: atlas.canal.y + rows.lowerBound, w: atlas.canal.w, h: h)
+                let cap = atlas.canalCapBottom, h = cap.h
                 canvas.blitFit(atlas.image, cap, dx: band.x, dy: band.y + band.h - h, dw: band.w, dh: h)
             }
         }
@@ -164,9 +152,23 @@ public enum Renderer {
         }
         for bridge in Metrics.bridges(boulevards: boulevards, waterways: waterways, grid: plan.grid, margin: m) {
             // Parapets along both edges of the deck, and the deck's shadow on the water below.
-            canvas.fillRect(x: bridge.x, y: bridge.y, w: bridge.w, h: 1, color: Metrics.parapetColor)
-            canvas.fillRect(x: bridge.x, y: bridge.y + bridge.h - 1, w: bridge.w, h: 1, color: Metrics.parapetColor)
-            canvas.fillRect(x: bridge.x, y: bridge.y + bridge.h, w: bridge.w, h: 1, color: Metrics.bridgeShadowColor)
+            canvas.fillRect(x: bridge.x, y: bridge.y, w: bridge.w, h: 1, color: theme.parapetColor)
+            canvas.fillRect(x: bridge.x, y: bridge.y + bridge.h - 1, w: bridge.w, h: 1, color: theme.parapetColor)
+            canvas.fillRect(x: bridge.x, y: bridge.y + bridge.h, w: bridge.w, h: 1, color: theme.bridgeShadowColor)
+        }
+        // Urban forests last: a boulevard or waterway may only run along a forest's edge (the
+        // planner rejects crossings), so this keeps the forest whole and hides just the band's
+        // spill onto it.
+        for park in plan.parks {
+            let dw = Metrics.span(park.size.w), dh = Metrics.span(park.size.h)
+            if park.sprite.rotated {
+                let turned = atlas.image.rotatedClockwise(park.sprite.source)
+                canvas.blitScaled(turned, AtlasRect(x: 0, y: 0, w: turned.width, h: turned.height),
+                                  dx: m + park.x * p, dy: m + park.y * p, dw: dw, dh: dh)
+            } else {
+                canvas.blitScaled(atlas.image, park.sprite.source, dx: m + park.x * p, dy: m + park.y * p,
+                                  dw: dw, dh: dh)
+            }
         }
         return canvas
     }
