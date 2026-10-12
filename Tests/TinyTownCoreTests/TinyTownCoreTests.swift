@@ -178,38 +178,47 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
 
     @Test func canvasGrowsByOuterRoad() throws {
         let img = try render("C*", border: true)
-        #expect(img.width == 3 * 21 + 2 && img.height == 3 * 21 + 2)
-        #expect(Metrics.canvasSize(GridSize(width: 13, height: 7), margin: 2) == (275, 149))
-        for (x, y) in [(0, 0), (1, 30), (64, 64), (30, 64), (64, 1)] {
+        let r = Metrics.road, p = Metrics.pitch
+        #expect(img.width == 3 * p + r && img.height == 3 * p + r)
+        #expect(Metrics.canvasSize(GridSize(width: 13, height: 7), margin: r) == (13 * p + r, 7 * p + r))
+        let last = img.width - 1
+        for (x, y) in [(0, 0), (0, 30), (last, last), (30, last), (last, 0)] {
             #expect(img.pixel(x, y) == Metrics.roadColor)
         }
     }
 
-    @Test func tilesShiftByTwo() throws {
+    @Test func tilesShiftByOuterRoad() throws {
         let plain = try render("C{0,0}", border: false), framed = try render("C{0,0}", border: true)
-        for y in 0..<19 { for x in 0..<19 { #expect(framed.pixel(x + 2, y + 2) == plain.pixel(x, y)) } }
+        let r = Metrics.road
+        for y in 0..<19 { for x in 0..<19 { #expect(framed.pixel(x + r, y + r) == plain.pixel(x, y)) } }
     }
 
-    // With --border, road row 1 is y=21..22 and the F{1} band y=15..28; road column 2 is x=42..43
-    // and its canal band x=40..45. A single pixel of sprite may happen to equal the road color,
-    // so check whole cross-sections of the band.
+    /// Rows (F) or columns (W) covered by a line's band with --border.
+    private func band(_ kind: PlacementKind, _ index: Int, _ lo: Int, _ hi: Int) -> Range<Int> {
+        let b = Metrics.band(of: Plan.Line(kind: kind, index: index, span: Span(lo, hi)), grid: g, margin: Metrics.road)
+        return kind == .firebreak ? b.y..<b.y + b.h : b.x..<b.x + b.w
+    }
+
+    // A single pixel of sprite may happen to equal the road color, so check whole cross-sections of the band.
     private func isRoad(_ img: Bitmap, xs: Range<Int>, ys: Range<Int>) -> Bool {
         ys.allSatisfy { y in xs.allSatisfy { img.pixel($0, y) == Metrics.roadColor } }
     }
 
     @Test func linesReachingGridEdgeCrossOuterRoad() throws {
         let img = try render("F{1} W{2,1-2}", border: true)
-        #expect(!isRoad(img, xs: 0..<1, ys: 15..<29))                          // F at left edge
-        #expect(!isRoad(img, xs: img.width - 1..<img.width, ys: 15..<29))     // F at right edge
-        #expect(!isRoad(img, xs: 40..<46, ys: img.height - 1..<img.height))   // W reaches bottom edge
-        #expect(isRoad(img, xs: 40..<46, ys: 0..<1))                          // W starts inside: no extension
+        let fy = band(.firebreak, 1, 0, 2), wx = band(.waterway, 2, 1, 2)
+        #expect(!isRoad(img, xs: 0..<1, ys: fy))                               // F at left edge
+        #expect(!isRoad(img, xs: img.width - 1..<img.width, ys: fy))          // F at right edge
+        #expect(!isRoad(img, xs: wx, ys: img.height - 1..<img.height))        // W reaches bottom edge
+        #expect(isRoad(img, xs: wx, ys: 0..<1))                               // W starts inside: no extension
     }
 
     @Test func partialLinesAndShortCanalStayInside() throws {
         let img = try render("F{1,1-2} W{1,2-2}", border: true)
-        #expect(isRoad(img, xs: 0..<1, ys: 15..<29))                          // F starts at column 1
-        #expect(!isRoad(img, xs: img.width - 1..<img.width, ys: 15..<29))     // ...but reaches the right edge
-        #expect(isRoad(img, xs: 19..<25, ys: img.height - 1..<img.height))   // single-tile canal not extended
+        let fy = band(.firebreak, 1, 1, 2), wx = band(.waterway, 1, 2, 2)
+        #expect(isRoad(img, xs: 0..<1, ys: fy))                               // F starts at column 1
+        #expect(!isRoad(img, xs: img.width - 1..<img.width, ys: fy))          // ...but reaches the right edge
+        #expect(isRoad(img, xs: wx, ys: img.height - 1..<img.height))         // single-tile canal not extended
     }
 
     @Test func option() throws {
@@ -269,29 +278,34 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
 @Suite struct RendererTests {
     @Test func geometry() throws {
         let img = Renderer.render(try plan("C{0,0}", grid: GridSize(width: 3, height: 2)), atlas: atlas)
-        #expect(img.width == 61 && img.height == 40)
-        #expect(img.pixel(19, 5) == Metrics.roadColor)   // vertical road
-        #expect(img.pixel(30, 20) == Metrics.roadColor)  // horizontal road
-        #expect(img.pixel(25, 5) == Metrics.groundColor) // empty tile
+        let p = Metrics.pitch, r = Metrics.road, t = Metrics.tile
+        #expect(img.width == 3 * p - r && img.height == 2 * p - r)
+        #expect(Metrics.canvasSize(GridSize(width: 13, height: 7)) == (259, 139))  // 1 px roads
+        #expect(img.pixel(t, 5) == Metrics.roadColor)      // vertical road right of tile 0
+        #expect(img.pixel(30, t) == Metrics.roadColor)     // horizontal road below tile row 0
+        #expect(img.pixel(p + 5, 5) == Metrics.groundColor) // empty tile
     }
 
-    /// Canal column for vertical road 1: 6 px wide, centered on the road at x=19..20.
-    private func canalColumn(_ img: Bitmap, y: Int) -> [RGBA] { (17..<23).map { img.pixel($0, y) } }
+    /// x of the canal band for vertical road 1 (6 px wide around the road).
+    private let canalX = Metrics.band(of: Plan.Line(kind: .waterway, index: 1, span: Span(0, 0)),
+                                      grid: GridSize(width: 3, height: 3)).x
+    private func canalColumn(_ img: Bitmap, y: Int) -> [RGBA] { (canalX..<canalX + 6).map { img.pixel($0, y) } }
 
     private func expected(_ src: AtlasRect, dy: Int, dh: Int, tiled: Bool = false) -> Bitmap {
-        var b = Bitmap(width: 61, height: 61)
+        var b = Bitmap(width: 3 * Metrics.pitch, height: 3 * Metrics.pitch)
         if tiled {
-            b.blitTiled(atlas.image, src, dx: 17, dy: dy, dw: 6, dh: dh, phaseY: dy)
+            b.blitTiled(atlas.image, src, dx: canalX, dy: dy, dw: 6, dh: dh, phaseY: dy)
         } else {
-            b.blitFit(atlas.image, src, dx: 17, dy: dy, dw: 6, dh: dh)
+            b.blitFit(atlas.image, src, dx: canalX, dy: dy, dw: 6, dh: dh)
         }
         return b
     }
 
     @Test func singleTileWaterwayUsesShortCanal() throws {
         let img = Renderer.render(try plan("W{1,1-1}", grid: GridSize(width: 3, height: 3)), atlas: atlas)
-        let want = expected(atlas.canalShort, dy: 21, dh: 19)
-        for y in 21..<40 { #expect(canalColumn(img, y: y) == canalColumn(want, y: y)) }
+        let top = Metrics.pitch, t = Metrics.tile
+        let want = expected(atlas.canalShort, dy: top, dh: t)
+        for y in top..<top + t { #expect(canalColumn(img, y: y) == canalColumn(want, y: y)) }
     }
 
     private func capSource(_ rows: Range<Int>) -> AtlasRect {
@@ -301,18 +315,20 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
     @Test func partialWaterwayIsCappedOnlyInsideGrid() throws {
         let img = Renderer.render(try plan("W{1,0-1}", grid: GridSize(width: 3, height: 3)), atlas: atlas)
         let capH = Metrics.canalCapBottomRows.count
-        let bottomCap = expected(capSource(Metrics.canalCapBottomRows), dy: 40 - capH, dh: capH)
-        for y in (40 - capH)..<40 { #expect(canalColumn(img, y: y) == canalColumn(bottomCap, y: y)) }
+        let end = Metrics.pitch + Metrics.tile  // bottom of tile row 1
+        let bottomCap = expected(capSource(Metrics.canalCapBottomRows), dy: end - capH, dh: capH)
+        for y in (end - capH)..<end { #expect(canalColumn(img, y: y) == canalColumn(bottomCap, y: y)) }
         // Top end touches the image edge: plain canal body, no cap.
-        let body = expected(atlas.canal, dy: 0, dh: 40, tiled: true)
+        let body = expected(atlas.canal, dy: 0, dh: end, tiled: true)
         for y in 0..<Metrics.canalCapTopRows.count { #expect(canalColumn(img, y: y) == canalColumn(body, y: y)) }
     }
 
     @Test func topCapComesFromCanalItself() throws {
         let img = Renderer.render(try plan("W{1,1-2}", grid: GridSize(width: 3, height: 3)), atlas: atlas)
         let capH = Metrics.canalCapTopRows.count
-        let topCap = expected(capSource(Metrics.canalCapTopRows), dy: 21, dh: capH)
-        for y in 21..<21 + capH { #expect(canalColumn(img, y: y) == canalColumn(topCap, y: y)) }
+        let top = Metrics.pitch  // top of tile row 1
+        let topCap = expected(capSource(Metrics.canalCapTopRows), dy: top, dh: capH)
+        for y in top..<top + capH { #expect(canalColumn(img, y: y) == canalColumn(topCap, y: y)) }
     }
 
     @Test func capsUseCanalPaletteAndHaveNoOpenWater() {
@@ -339,11 +355,12 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
         let img = Renderer.render(try plan("U1x2{0,0}", grid: GridSize(width: 1, height: 2)), atlas: atlas)
         let src = atlas.parks[ParkSize(w: 1, h: 2)]!
         #expect(src.w > Metrics.tile)  // park_B is wider than one tile, so it must shrink
-        var scaled = Bitmap(width: 19, height: 40), cropped = scaled
-        scaled.blitScaled(atlas.image, src, dx: 0, dy: 0, dw: 19, dh: 40)
-        cropped.blitFit(atlas.image, src, dx: 0, dy: 0, dw: 19, dh: 40)
-        #expect(region(img, 0, 0, 19, 40) == region(scaled, 0, 0, 19, 40))
-        #expect(region(img, 0, 0, 19, 40) != region(cropped, 0, 0, 19, 40))
+        let w = Metrics.span(1), h = Metrics.span(2)
+        var scaled = Bitmap(width: w, height: h), cropped = scaled
+        scaled.blitScaled(atlas.image, src, dx: 0, dy: 0, dw: w, dh: h)
+        cropped.blitFit(atlas.image, src, dx: 0, dy: 0, dw: w, dh: h)
+        #expect(region(img, 0, 0, w, h) == region(scaled, 0, 0, w, h))
+        #expect(region(img, 0, 0, w, h) != region(cropped, 0, 0, w, h))
     }
 
     @Test func rotatedClockwise() {
@@ -365,9 +382,10 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
 
         let img = Renderer.render(try plan("U2x1{0,0}", grid: GridSize(width: 2, height: 1)), atlas: atlas)
         let turned = atlas.image.rotatedClockwise(sprite.source)
-        var want = Bitmap(width: 40, height: 19)
-        want.blitScaled(turned, AtlasRect(x: 0, y: 0, w: turned.width, h: turned.height), dx: 0, dy: 0, dw: 40, dh: 19)
-        #expect(region(img, 0, 0, 40, 19) == region(want, 0, 0, 40, 19))
+        let w = Metrics.span(2), h = Metrics.span(1)
+        var want = Bitmap(width: w, height: h)
+        want.blitScaled(turned, AtlasRect(x: 0, y: 0, w: turned.width, h: turned.height), dx: 0, dy: 0, dw: w, dh: h)
+        #expect(region(img, 0, 0, w, h) == region(want, 0, 0, w, h))
     }
 
     @Test(arguments: [1, 2, 3])
@@ -407,22 +425,26 @@ private func plan(_ layout: String, grid: GridSize = grid, seed: Int = 1) throws
     }
 
     @Test func bridgeDrawsParapetsOverBoulevard() throws {
-        let img = Renderer.render(try plan("F{2} W{2}", grid: GridSize(width: 4, height: 4)), atlas: atlas)
-        // Canal band x=38..43; boulevard band y=34..47.
-        for x in 38..<44 {
-            #expect(img.pixel(x, 34) == Metrics.parapetColor)
-            #expect(img.pixel(x, 47) == Metrics.parapetColor)
-            #expect(img.pixel(x, 48) == Metrics.bridgeShadowColor)
+        let g = GridSize(width: 4, height: 4)
+        let img = Renderer.render(try plan("F{2} W{2}", grid: g), atlas: atlas)
+        let f = Metrics.band(of: Plan.Line(kind: .firebreak, index: 2, span: Span(0, 3)), grid: g)
+        let w = Metrics.band(of: Plan.Line(kind: .waterway, index: 2, span: Span(0, 3)), grid: g)
+        for x in w.x..<w.x + w.w {
+            #expect(img.pixel(x, f.y) == Metrics.parapetColor)
+            #expect(img.pixel(x, f.y + f.h - 1) == Metrics.parapetColor)
+            #expect(img.pixel(x, f.y + f.h) == Metrics.bridgeShadowColor)
         }
         // The deck between the parapets is boulevard, not canal.
-        var deck = Bitmap(width: 82, height: 82)
-        deck.blitTiled(atlas.image, atlas.boulevard, dx: 0, dy: 34, dw: 82, dh: 14, phaseX: 0)
-        for y in 35..<47 { #expect(img.pixel(40, y) == deck.pixel(40, y)) }
+        var deck = Bitmap(width: img.width, height: img.height)
+        deck.blitTiled(atlas.image, atlas.boulevard, dx: 0, dy: f.y, dw: img.width, dh: f.h, phaseX: 0)
+        let cx = w.x + w.w / 2
+        for y in f.y + 1..<f.y + f.h - 1 { #expect(img.pixel(cx, y) == deck.pixel(cx, y)) }
     }
 
     @Test func boulevardReplacesRoad() throws {
         let img = Renderer.render(try plan("F{1}", grid: GridSize(width: 3, height: 2)), atlas: atlas)
-        #expect(img.pixel(30, 20) != Metrics.roadColor)
+        let roadY = Metrics.pitch - Metrics.road  // road row 1
+        #expect((0..<img.width).contains { img.pixel($0, roadY) != Metrics.roadColor })
     }
 }
 

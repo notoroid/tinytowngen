@@ -3,9 +3,10 @@ import Foundation
 /// Pixel geometry of the town.
 public enum Metrics {
     public static let tile = 19
-    public static let road = 2
+    public static let road = 1
     public static let pitch = tile + road
-    /// Boulevard / canal sprite thickness; they cover the 2px road and spill into neighbouring tiles.
+    /// Boulevard / canal sprite thickness; they cover the 1 px road and spill into neighbouring tiles
+    /// (one pixel more on the bottom/right side, since the spill cannot split evenly around 1 px).
     public static let boulevardThickness = 14
     public static let canalThickness = 6
     /// Rows of `canal_N` (relative to its top) where its green channel is closed off by stone:
@@ -87,7 +88,7 @@ public enum Metrics {
 }
 
 public enum Renderer {
-    /// - Parameter border: also draw the 2 px road around the outside of the grid.
+    /// - Parameter border: also draw the 1 px road around the outside of the grid.
     public static func render(_ plan: Plan, atlas: Atlas, border: Bool = false) -> Bitmap {
         let m = border ? Metrics.road : 0
         let (w, h) = Metrics.canvasSize(plan.grid, margin: m)
