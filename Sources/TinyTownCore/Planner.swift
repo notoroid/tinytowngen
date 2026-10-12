@@ -51,9 +51,9 @@ public enum Planner {
         func pickVariant(_ kind: PlacementKind, explicit: Int?, token: String) throws -> (Int, AtlasRect) {
             let pool: [AtlasRect]
             switch kind {
-            case .commercial: pool = atlas.commercial
+            case .commercial, .commercialPart: pool = atlas.commercial
             case .half(let s): pool = atlas.halves[s] ?? []
-            case .building: pool = atlas.buildings
+            case .building, .buildingPart: pool = atlas.buildings
             default: fatalError("no variants for \(kind)")
             }
             guard !pool.isEmpty else { throw TownError.resource("no atlas pieces for '\(token)'") }
@@ -79,7 +79,7 @@ public enum Planner {
         // Pass 1: explicit tiles, parks, and lines, in spec order.
         for p in placements where !p.fill {
             switch p.kind {
-            case .commercial, .half, .building:
+            case .commercial, .half, .building, .commercialPart, .buildingPart:
                 let xs = p.a!, ys = p.b!
                 try checkSpan(xs, grid.width, "x", p.token)
                 try checkSpan(ys, grid.height, "y", p.token)

@@ -10,6 +10,8 @@ public indirect enum TownError: Error, Equatable, CustomStringConvertible {
     case output(String)
     /// Wraps a syntax error with its 1-based line number in a multi-line layout.
     case atLine(Int, TownError)
+    /// Every problem found in a raster layout, each naming its token and part position.
+    case raster([String])
 
     public var description: String {
         switch self {
@@ -21,6 +23,8 @@ public indirect enum TownError: Error, Equatable, CustomStringConvertible {
         case .resource(let m): "resource error: \(m)"
         case .output(let m): "output error: \(m)"
         case .atLine(let n, let e): "line \(n): \(e)"
+        case .raster(let issues):
+            "raster layout has \(issues.count) problem\(issues.count == 1 ? "" : "s"):\n" + issues.map { "  - \($0)" }.joined(separator: "\n")
         }
     }
 }
@@ -45,6 +49,10 @@ public struct GridSize: Equatable, Sendable {
 public enum PlacementKind: Equatable, Sendable {
     case commercial
     case half(HalfSide)
+    /// One part (quarter) of a tile, cut from a full commercial block (raster `C0`).
+    case commercialPart(Quadrant)
+    /// One part (quarter) of a tile, cut from a full building sprite (raster `B0`).
+    case buildingPart(Quadrant)
     case building
     case park(ParkSize)
     case firebreak
@@ -55,6 +63,8 @@ public enum PlacementKind: Equatable, Sendable {
         switch self {
         case .commercial: "C"
         case .half(let s): "C" + s.rawValue
+        case .commercialPart: "C0"
+        case .buildingPart: "B0"
         case .building: "B"
         case .park(let p): p.description
         case .firebreak: "F"
@@ -105,6 +115,7 @@ enum Quadrants {
         case .half(.right): 0b1010
         case .half(.top): 0b0011
         case .half(.bottom): 0b1100
+        case .commercialPart(let q), .buildingPart(let q): 1 << q.rawValue
         default: full
         }
     }

@@ -2,6 +2,8 @@ import Foundation
 
 public struct CLIOptions: Equatable {
     public var layout: String?
+    /// `--raster`: the city as a stream of 2x2 parts per tile (see `RasterLayout`).
+    public var raster: String?
     public var output: String?
     /// nil: not given on the command line (fall back to the layout's @grid, then 13x7).
     public var grid: GridSize?
@@ -39,6 +41,7 @@ public struct CLIOptions: Equatable {
             case "-v", "--verbose": o.verbose = true
             case "--border": o.border = true
             case "-l", "--layout": o.layout = try value(arg, inline: inline)
+            case "-r", "--raster": o.raster = try value(arg, inline: inline)
             case "--list-variants": o.listVariants = try VariantSheet.parseTarget(value(arg, inline: inline))
             case "-o", "--output": o.output = try value(arg, inline: inline)
             case "-g", "--grid": o.grid = try GridSize(parsing: value(arg, inline: inline))
@@ -56,11 +59,12 @@ public struct CLIOptions: Equatable {
             i += 1
         }
         if !o.help {
-            if o.listVariants != nil && o.layout != nil {
-                throw TownError.usage("--list-variants and --layout cannot be used together")
+            let modes = [o.layout != nil, o.raster != nil, o.listVariants != nil].filter { $0 }.count
+            if modes > 1 {
+                throw TownError.usage("use only one of --layout, --raster and --list-variants")
             }
-            if o.layout == nil && o.listVariants == nil {
-                throw TownError.usage("--layout is required (see --help)")
+            if modes == 0 {
+                throw TownError.usage("--layout or --raster is required (see --help)")
             }
             if o.output == nil { throw TownError.usage("--output is required (see --help)") }
         }
@@ -74,6 +78,7 @@ public enum CLI {
 
     USAGE
       tinytowngen -l <layout|@file|@-> -o <file.png> [-g WxH] [-s seed] [--border] [--scale n] [-v]
+      tinytowngen -r <parts|@file|@-> -o <file.png> [-g WxH] [-s seed] [--border] [--scale n] [-v]
       tinytowngen --list-variants <C|CL|CR|CT|CB|B|all> -o <sheet.png> [--scale n]
 
     OPTIONS
@@ -81,6 +86,8 @@ public enum CLI {
                              @path reads it from a file, @- from stdin. A value
                              containing spaces is always an inline layout, so a
                              path with spaces must be passed as: -l @- < "path".
+      -r, --raster <string>  Instead of -l: the city as a stream of parts. See RASTER.
+                             @path / @- read it from a file / stdin, like -l.
       -o, --output <path>    (required) Output PNG path.
       -g, --grid <WxH>       Grid size in tiles. Default: layout's @grid, else 13x7.
       -s, --seed <int>       Seed (>= 1) for picking C/CL/CR/CT/CB/B variants.
@@ -139,6 +146,47 @@ public enum CLI {
       rectangle, e.g. C{0-12,0-6}.
       Variant: append #n to C/CL/CR/CT/CB/B (or C*/B*) to force atlas variant n.
 
+    RASTER (-r)
+      Every tile is 2x2 parts, so a WxH grid has (2W) x (2H) parts. Give them
+      row by row, left to right (line breaks optional; separators between
+      tokens optional: "C1C3" = "C1 C3"; '#' comments to end of line).
+      Each part is a letter and a digit:
+        C0          Commercial part on its own (a quarter of a block).
+        C1..C4      Commercial part linked to its neighbour in the same tile by
+                    a unit vector: C1=(1,0) right, C2=(0,-1) down, C3=(-1,0)
+                    left, C4=(0,1) up. Valid blocks:
+                      C1 C3          horizontal half (top or bottom row)
+                      C2 / C4        vertical half (C2 above C4, left or right column)
+                      C1 C2 / C4 C3  whole tile
+        B0          Building part; B0 B0 / B0 B0 is a whole building tile,
+                    fewer B0 are single parts.
+        U0          Urban-forest part; a tile-aligned rectangle of U0 is one
+                    forest (sizes 1x1, 1x2, 2x1, 2x2, 3x3 tiles). Neighbouring
+                    U0 regions merge into one forest.
+      Firebreaks and canals replace roads, so they are NOT parts and are not
+      counted:
+        F0 row      A row of 2W F0 (F0F0 per tile) between two tile rows, i.e.
+                    right before part row 2, 4, ... 2H-2. Horizontal only.
+        R0          Inside a part row, between the parts of two neighbouring
+                    tiles (between part cols 1|2, 3|4, ...). R0R0 - one R0 in
+                    each of a tile's two part rows - is one tile of canal;
+                    consecutive tile rows join into one waterway. Vertical only.
+      -g/-s/--border work as for -l (no @directives in raster input).
+
+      Raster errors (exit 1) are all reported together; each names the token
+      number (#n, counted from 1 over all tokens incl. F/R), the part row/col
+      (0-based), the tile {x,y} and the part's corner, plus a fix:
+      - part count (F/R excluded) differs from (2W)x(2H): where parts are
+        missing or which tokens are extra;
+      - unknown token, C digit > 4, or a digit other than 0 on U/B/F/R;
+      - a C1-C4 vector pointing out of its tile, at a part that is not
+        C1-C4, or parts that do not form one of the blocks above;
+      - F not as a whole row at a road between tile rows, or a row with the
+        wrong number of F0; R0 not on a road between tiles, or only one R0
+        of a tile's R0R0;
+      - a U0 region that is not a rectangle of whole tiles or has no sprite
+        size; an F row or R0 run crossing a forest (along its edge is fine).
+
     VARIANTS (seed)
       Without #n, variant = (tileCount mod seed + order) mod candidates,
       where tileCount = W*H and order counts cells of the same pattern
@@ -170,6 +218,7 @@ public enum CLI {
                                                #   C*
       printf 'U2{0,0}\\nC*' | tinytowngen -o town.png -l @-
       tinytowngen -o small.png -l "@grid 4x3 @border U2{0,0} C*"
+      tinytowngen -g 2x2 -o raster.png -r "C1C2 C0B0 C4C3 B0C0 F0F0F0F0 U0U0 R0 C2C2 U0U0 R0 C4C4"
       tinytowngen --list-variants C -o variants-C.png --scale 4
       tinytowngen --list-variants all -o variants.png --scale 4
     """
@@ -180,6 +229,7 @@ public enum CLI {
         do {
             opts = try CLIOptions.parse(args)
             if let layout = opts.layout { opts.layout = try loadLayout(layout) }
+            if let raster = opts.raster { opts.raster = try loadLayout(raster) }
         } catch {
             FileHandle.standardError.write(Data("error: \(error)\n".utf8))
             return 2
@@ -200,9 +250,16 @@ public enum CLI {
                 print("wrote \(opts.output!) (\(image.width)x\(image.height) px, variants: \(ranges.joined(separator: ", ")))")
                 return 0
             }
-            let doc = try LayoutParser.parseDocument(opts.layout!)
-            let (grid, seed, border) = resolve(opts, doc.settings)
-            let plan = try Planner.plan(doc.placements, grid: grid, seed: seed, atlas: atlas)
+            let placements: [Placement], grid: GridSize, seed: Int, border: Bool
+            if let raster = opts.raster {
+                (grid, seed, border) = resolve(opts, LayoutSettings())
+                placements = try RasterLayout.parse(raster, grid: grid, parkSizes: atlas.parkSizes)
+            } else {
+                let doc = try LayoutParser.parseDocument(opts.layout!)
+                (grid, seed, border) = resolve(opts, doc.settings)
+                placements = doc.placements
+            }
+            let plan = try Planner.plan(placements, grid: grid, seed: seed, atlas: atlas)
             if opts.verbose { FileHandle.standardError.write(Data(describe(plan).utf8)) }
             let image = Renderer.render(plan, atlas: atlas, border: border).scaled(by: opts.scale)
             try image.writePNG(to: URL(fileURLWithPath: opts.output!))
@@ -240,7 +297,12 @@ public enum CLI {
 
     static func describe(_ plan: Plan) -> String {
         var s = ""
-        for t in plan.tiles { s += "\(t.kind.orderKey){\(t.x),\(t.y)}#\(t.variant)\n" }
+        for t in plan.tiles {
+            var part = ""
+            if case .commercialPart(let q) = t.kind { part = " (\(q.name))" }
+            if case .buildingPart(let q) = t.kind { part = " (\(q.name))" }
+            s += "\(t.kind.orderKey){\(t.x),\(t.y)}#\(t.variant)\(part)\n"
+        }
         for p in plan.parks { s += "\(p.size){\(p.x),\(p.y)}\n" }
         for l in plan.lines {
             s += "\(l.kind == .firebreak ? "F" : "W"){\(l.index),\(l.span.lo)-\(l.span.hi)}\n"

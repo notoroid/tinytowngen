@@ -25,6 +25,20 @@ private struct TilesFile: Decodable {
 }
 
 /// Which part of a 19x19 tile a commercial half occupies.
+/// One of the four parts (2x2) of a tile, as used by the raster layout.
+public enum Quadrant: Int, CaseIterable, Sendable {
+    case topLeft, topRight, bottomLeft, bottomRight
+
+    public var name: String {
+        switch self {
+        case .topLeft: "top-left"
+        case .topRight: "top-right"
+        case .bottomLeft: "bottom-left"
+        case .bottomRight: "bottom-right"
+        }
+    }
+}
+
 public enum HalfSide: String, CaseIterable, Sendable {
     case left = "L", right = "R", top = "T", bottom = "B"
 }
@@ -141,6 +155,8 @@ public struct Atlas: Sendable {
         case .commercial: commercial.count
         case .half(let side): halves[side]?.count ?? 0
         case .building: buildings.count
+        case .commercialPart: commercial.count
+        case .buildingPart: buildings.count
         default: nil
         }
     }

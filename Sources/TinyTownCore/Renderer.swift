@@ -64,6 +64,17 @@ public enum Metrics {
         return out
     }
 
+    /// Pixel rectangle of one part (quarter) inside a tile; splits at the same 10 px as `halfRect`.
+    static func quadRect(_ q: Quadrant) -> (x: Int, y: Int, w: Int, h: Int) {
+        let a = (tile + 1) / 2  // 10
+        switch q {
+        case .topLeft: return (0, 0, a, a)
+        case .topRight: return (a, 0, tile - a, a)
+        case .bottomLeft: return (0, a, a, tile - a)
+        case .bottomRight: return (a, a, tile - a, tile - a)
+        }
+    }
+
     static func halfRect(_ side: HalfSide) -> (x: Int, y: Int, w: Int, h: Int) {
         let a = (tile + 1) / 2  // 10
         switch side {
@@ -92,10 +103,17 @@ public enum Renderer {
 
         for tile in plan.tiles {
             let ox = m + tile.x * p, oy = m + tile.y * p
-            if case .half(let side) = tile.kind {
+            switch tile.kind {
+            case .half(let side):
                 let r = Metrics.halfRect(side)
                 canvas.blitFit(atlas.image, tile.source, dx: ox + r.x, dy: oy + r.y, dw: r.w, dh: r.h)
-            } else {
+            case .commercialPart(let q), .buildingPart(let q):
+                // The quarter of the full-tile sprite, exactly as it appears in a whole tile.
+                var full = Bitmap(width: t, height: t)
+                full.blitFit(atlas.image, tile.source, dx: 0, dy: 0, dw: t, dh: t)
+                let r = Metrics.quadRect(q)
+                canvas.blitFit(full, AtlasRect(x: r.x, y: r.y, w: r.w, h: r.h), dx: ox + r.x, dy: oy + r.y, dw: r.w, dh: r.h)
+            default:
                 canvas.blitFit(atlas.image, tile.source, dx: ox, dy: oy, dw: t, dh: t)
             }
         }

@@ -22,7 +22,7 @@ description: tinytowngen の次の改善を 1 つ進める。BACKLOG.md から�
 4. **テスト**
    - 追加・変更した挙動に対するテストを `Tests/TinyTownCoreTests/` に追加する（正常系 + エラー系）。
    - `swift test` が全件パスするまで直す。
-   - 描画を変えると `GoldenImageTests` が失敗する。失敗メッセージの PNG を Read で見て、意図通りの変化であることを確認してから新しいハッシュに更新する（見ずに更新しない）。意図しないケースが変わった場合は実装を直す。
+   - 描画を変えると `GoldenImageTests` が失敗する。失敗メッセージの diff PNG（変化した画素が赤）と actual / expected PNG を Read で見て、意図通りの変化であることを確認してから更新する（見ずに更新しない）。更新は `UPDATE_GOLDEN=1 swift test` で `Golden/*.png` を書き直し、新しいハッシュを `cases` に貼り、`swift test` を再実行。意図しないケースが変わった場合は実装を直す。
 5. **目視確認**
    - 変更が描画に関わる場合、スクラッチパッドに `--scale 4` で PNG を出力し、Read で画像を見て確認する。変更前後を比べられる例を選ぶ。
 6. **ドキュメント同期**
