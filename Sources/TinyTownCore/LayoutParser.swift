@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The layout may span several lines. A word starting with `#` begins a comment
 /// that runs to the end of the line; `#n` attached to a token is a variant.
-/// A word starting with `@` is a directive (`@grid WxH`, `@seed N`, `@border`) whose
+/// A word starting with `@` is a directive (`@grid WxH`, `@seed N`, `@border`, `@map NAME`) whose
 /// value, if any, is the next word on the same line.
 public enum LayoutParser {
     public static func parse(_ text: String) throws -> [Placement] {
@@ -64,8 +64,15 @@ public enum LayoutParser {
             try once(s.border)
             s.border = true
             return false
+        case "@map":
+            try once(s.map != nil)
+            let v = try need("heiankyo11c")
+            do { s.map = try MapTheme.named(v) } catch {
+                throw TownError.syntax(token: "\(name) \(v)", "map must be one of \(MapTheme.all.map(\.name).joined(separator: ", "))")
+            }
+            return true
         default:
-            throw TownError.syntax(token: name, "unknown directive (use @grid WxH, @seed N, @border)")
+            throw TownError.syntax(token: name, "unknown directive (use @grid WxH, @seed N, @border, @map NAME)")
         }
     }
 

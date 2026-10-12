@@ -58,6 +58,7 @@ public struct ParkSprite: Equatable, Sendable {
 
 /// Sprite catalog built from the embedded atlas and tiles.json.
 public struct Atlas: Sendable {
+    public let theme: MapTheme
     public let image: Bitmap
     public let commercial: [AtlasRect]
     public let halves: [HalfSide: [AtlasRect]]
@@ -65,8 +66,12 @@ public struct Atlas: Sendable {
     public let parks: [ParkSize: AtlasRect]
     public let boulevard: AtlasRect
     public let canal: AtlasRect
-    /// Short canal closed at both ends (`canal_S`): single-tile waterways and end caps.
+    /// Short canal closed at both ends (`canal_S`): single-tile waterways.
     public let canalShort: AtlasRect
+    /// Closed north / south ends used to cap partial waterways: the `canal_cap_top` /
+    /// `canal_cap_bottom` pieces if the atlas has them, else stone rows of `canal_N`.
+    public let canalCapTop: AtlasRect
+    public let canalCapBottom: AtlasRect
 
     /// Park pieces in the atlas, keyed by their tile footprint.
     static let parkIDs: [String: ParkSize] = [
@@ -76,15 +81,16 @@ public struct Atlas: Sendable {
         "park_A": ParkSize(w: 3, h: 3),
     ]
 
-    public static func loadEmbedded() throws -> Atlas {
-        guard let png = Data(base64Encoded: EmbeddedResources.patternsPNG),
-              let json = Data(base64Encoded: EmbeddedResources.tilesJSON) else {
-            throw TownError.resource("embedded resources are not valid base64")
+    public static func loadEmbedded(_ theme: MapTheme = .sapporo) throws -> Atlas {
+        guard let png = Data(base64Encoded: theme.pngBase64),
+              let json = Data(base64Encoded: theme.jsonBase64) else {
+            throw TownError.resource("embedded resources of map '\(theme.name)' are not valid base64")
         }
-        return try Atlas(png: png, json: json)
+        return try Atlas(png: png, json: json, theme: theme)
     }
 
-    init(png: Data, json: Data) throws {
+    init(png: Data, json: Data, theme: MapTheme = .sapporo) throws {
+        self.theme = theme
         image = try Bitmap(pngData: png)
         let pieces = try JSONDecoder().decode(TilesFile.self, from: json).pieces
 
@@ -95,6 +101,8 @@ public struct Atlas: Sendable {
         var boulevard: AtlasRect?
         var canal: AtlasRect?
         var canalShort: AtlasRect?
+        var capTop: AtlasRect?
+        var capBottom: AtlasRect?
 
         for p in pieces {
             switch p.kind {
@@ -118,6 +126,10 @@ public struct Atlas: Sendable {
                 canal = p.rect
             case "river_canal" where p.id == "canal_S":
                 canalShort = p.rect
+            case "river_canal" where p.id == "canal_cap_top":
+                capTop = p.rect
+            case "river_canal" where p.id == "canal_cap_bottom":
+                capBottom = p.rect
             case "firebreak_boulevard":
                 boulevard = p.rect
             default:
@@ -133,6 +145,9 @@ public struct Atlas: Sendable {
         self.parks = parks
         self.boulevard = boulevard
         self.canal = canal
+        func rows(_ r: Range<Int>) -> AtlasRect { AtlasRect(x: canal.x, y: canal.y + r.lowerBound, w: canal.w, h: r.count) }
+        self.canalCapTop = capTop ?? rows(Metrics.canalCapTopRows)
+        self.canalCapBottom = capBottom ?? rows(Metrics.canalCapBottomRows)
         self.canalShort = canalShort
     }
 

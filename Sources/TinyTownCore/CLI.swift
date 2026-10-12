@@ -14,6 +14,8 @@ public struct CLIOptions: Equatable {
     public var scale = 1
     public var verbose = false
     public var border = false
+    /// nil: not given on the command line (fall back to the layout's @map, then sapporo).
+    public var map: MapTheme?
     public var help = false
     /// `--list-variants`: render a contact sheet of these patterns instead of a town.
     public var listVariants: [PlacementKind]?
@@ -40,6 +42,7 @@ public struct CLIOptions: Equatable {
             case "-h", "--help": o.help = true
             case "-v", "--verbose": o.verbose = true
             case "--border": o.border = true
+            case "-m", "--map": o.map = try MapTheme.named(value(arg, inline: inline))
             case "-l", "--layout": o.layout = try value(arg, inline: inline)
             case "-r", "--raster": o.raster = try value(arg, inline: inline)
             case "--list-variants": o.listVariants = try VariantSheet.parseTarget(value(arg, inline: inline))
@@ -77,9 +80,9 @@ public enum CLI {
     tinytowngen - render an aerial PNG of a grid city from a text layout
 
     USAGE
-      tinytowngen -l <layout|@file|@-> -o <file.png> [-g WxH] [-s seed] [--border] [--scale n] [-v]
-      tinytowngen -r <parts|@file|@-> -o <file.png> [-g WxH] [-s seed] [--border] [--scale n] [-v]
-      tinytowngen --list-variants <C|CL|CR|CT|CB|B|all> -o <sheet.png> [--scale n]
+      tinytowngen -l <layout|@file|@-> -o <file.png> [-g WxH] [-s seed] [-m map] [--border] [--scale n] [-v]
+      tinytowngen -r <parts|@file|@-> -o <file.png> [-g WxH] [-s seed] [-m map] [--border] [--scale n] [-v]
+      tinytowngen --list-variants <C|CL|CR|CT|CB|B|all> -o <sheet.png> [-m map] [--scale n]
 
     OPTIONS
       -l, --layout <string>  (required) Placement string. See LAYOUT.
@@ -92,6 +95,8 @@ public enum CLI {
       -g, --grid <WxH>       Grid size in tiles. Default: layout's @grid, else 13x7.
       -s, --seed <int>       Seed (>= 1) for picking C/CL/CR/CT/CB/B variants.
                              Default: layout's @seed, else 1.
+      -m, --map <name>       Map pattern (tile art and colours). Default: layout's
+                             @map, else sapporo. See MAPS.
           --border           Also draw a 1 px road around the outside of the grid
                              (also enabled by @border in the layout).
           --scale <int>      Integer nearest-neighbour upscale of the output (1-32). Default: 1.
@@ -103,6 +108,18 @@ public enum CLI {
                              under a yellow header naming the pattern.
                              Needs -o; cannot be combined with -l.
       -h, --help             Show this help.
+
+    MAPS
+      sapporo       Modern city from aerial photos (default). Roads #777777.
+      heiankyo11c   11th-century Heian-kyo (Kyoto) in pixel art. Roads are dry
+                    earth #BF763A. C/CL/CR/CT/CB = compounds behind white,
+                    tile-capped earthen walls with one-storey houses (mostly grey
+                    tile roofs); B = compound under construction; U = temple
+                    precinct (corridor with vermilion pillars, hall, pagoda; the
+                    3x3 one has a pond garden); F = great avenue (oji) lined with
+                    trees; W/R = river; bridges have vermilion railings.
+      The layout syntax, geometry and errors are the same for every map; only
+      the number of variants (see VARIANTS) differs.
 
     GEOMETRY
       Tiles are 19x19 px separated by 1 px roads (#777777). Tile {x,y} is
@@ -123,7 +140,8 @@ public enum CLI {
       Directives (anywhere in the layout; the value is the next word):
       @grid WxH     Grid size, like -g.         @seed N   Seed, like -s.
       @border       Outer road, like --border.
-      Command-line -g/-s override @grid/@seed; @border and --border add up.
+      @map NAME     Map pattern, like -m (sapporo, heiankyo11c).
+      Command-line -g/-s/-m override @grid/@seed/@map; @border and --border add up.
       A layout file with directives reproduces the same image on its own.
 
       C{x,y}        Commercial block, 1 tile.               (alias: C1{x,y})
@@ -132,6 +150,8 @@ public enum CLI {
       B{x,y}        Building under construction, 1 tile.
       U<n>{x,y}     Urban forest n x n tiles, top-left at {x,y}. Covers the
       U<w>x<h>{x,y}   roads inside it. Sizes: U1, U2, U3, U1x2, U2x1 (U1x2 turned 90°).
+                      F/W may run along its edge (not through it); they are drawn
+                      beside the forest without covering it.
       F{r}          Fire-block boulevard replacing horizontal road r (full width).
       F{r,x0-x1}      ...only along tile columns x0..x1.
       W{c}          Waterway replacing vertical road c (full height).
@@ -171,7 +191,7 @@ public enum CLI {
                     tiles (between part cols 1|2, 3|4, ...). R0R0 - one R0 in
                     each of a tile's two part rows - is one tile of canal;
                     consecutive tile rows join into one waterway. Vertical only.
-      -g/-s/--border work as for -l (no @directives in raster input).
+      -g/-s/-m/--border work as for -l (no @directives in raster input).
 
       Raster errors (exit 1) are all reported together; each names the token
       number (#n, counted from 1 over all tokens incl. F/R), the part row/col
@@ -191,7 +211,9 @@ public enum CLI {
       Without #n, variant = (tileCount mod seed + order) mod candidates,
       where tileCount = W*H and order counts cells of the same pattern
       (C, CL, CR, CT, CB, B separately) in specification order, 0-based.
-      Candidates: C=63, CL=12, CR=12, CT=20, CB=20, B=2. Use -v to see choices,
+      Candidates: sapporo     C=63, CL=12, CR=12, CT=20, CB=20, B=2
+                  heiankyo11c C=16, CL=4, CR=4, CT=4, CB=4, B=2
+      Use -v to see choices,
       and --list-variants to see what each #n looks like.
 
     ERRORS (exit code 1, message on stderr)
@@ -200,10 +222,12 @@ public enum CLI {
       - An urban forest crossed by F or W (F/W only on its edge is allowed).
       - Unknown pattern, malformed coordinates, unsupported forest size,
         or a #n variant that does not exist.
-      - Unknown directive, directive without a valid value, or the same
+      - Unknown directive, directive without a valid value (e.g. an unknown
+        @map name), or the same
         directive twice. In a multi-line layout these
         messages start with "line N:".
-      Usage errors (missing/invalid options, unreadable @file) exit with code 2.
+      Usage errors (missing/invalid options such as an unknown -m map,
+      unreadable @file) exit with code 2.
 
     EXAMPLES
       tinytowngen -l "C*" -o town.png
@@ -219,6 +243,7 @@ public enum CLI {
       printf 'U2{0,0}\\nC*' | tinytowngen -o town.png -l @-
       tinytowngen -o small.png -l "@grid 4x3 @border U2{0,0} C*"
       tinytowngen -g 2x2 -o raster.png -r "C1C2 C0B0 C4C3 B0C0 F0F0F0F0 U0U0 R0 C2C2 U0U0 R0 C4C4"
+      tinytowngen -m heiankyo11c -o heian.png -l "U3{0,0} U2{9,4} F{3} W{5} B{7,1} C*"
       tinytowngen --list-variants C -o variants-C.png --scale 4
       tinytowngen --list-variants all -o variants.png --scale 4
     """
@@ -239,8 +264,8 @@ public enum CLI {
             return 0
         }
         do {
-            let atlas = try Atlas.loadEmbedded()
             if let kinds = opts.listVariants {
+                let atlas = try Atlas.loadEmbedded(opts.map ?? .sapporo)
                 let image = VariantSheet.render(kinds, atlas: atlas).scaled(by: opts.scale)
                 try image.writePNG(to: URL(fileURLWithPath: opts.output!))
                 let ranges = kinds.map { kind -> String in
@@ -250,20 +275,23 @@ public enum CLI {
                 print("wrote \(opts.output!) (\(image.width)x\(image.height) px, variants: \(ranges.joined(separator: ", ")))")
                 return 0
             }
-            let placements: [Placement], grid: GridSize, seed: Int, border: Bool
+            let placements: [Placement], settings: Settings, atlas: Atlas
             if let raster = opts.raster {
-                (grid, seed, border) = resolve(opts, LayoutSettings())
-                placements = try RasterLayout.parse(raster, grid: grid, parkSizes: atlas.parkSizes)
+                settings = resolve(opts, LayoutSettings())
+                atlas = try Atlas.loadEmbedded(settings.map)
+                placements = try RasterLayout.parse(raster, grid: settings.grid, parkSizes: atlas.parkSizes)
             } else {
                 let doc = try LayoutParser.parseDocument(opts.layout!)
-                (grid, seed, border) = resolve(opts, doc.settings)
+                settings = resolve(opts, doc.settings)
+                atlas = try Atlas.loadEmbedded(settings.map)
                 placements = doc.placements
             }
+            let (grid, seed, border) = (settings.grid, settings.seed, settings.border)
             let plan = try Planner.plan(placements, grid: grid, seed: seed, atlas: atlas)
             if opts.verbose { FileHandle.standardError.write(Data(describe(plan).utf8)) }
             let image = Renderer.render(plan, atlas: atlas, border: border).scaled(by: opts.scale)
             try image.writePNG(to: URL(fileURLWithPath: opts.output!))
-            print("wrote \(opts.output!) (\(image.width)x\(image.height) px, grid \(grid.width)x\(grid.height), seed \(seed)\(border ? ", border" : ""))")
+            print("wrote \(opts.output!) (\(image.width)x\(image.height) px, grid \(grid.width)x\(grid.height), seed \(seed), map \(settings.map.name)\(border ? ", border" : ""))")
             return 0
         } catch {
             FileHandle.standardError.write(Data("error: \(error)\n".utf8))
@@ -273,8 +301,16 @@ public enum CLI {
     }
 
     /// Command-line options win over @directives in the layout, which win over defaults.
-    static func resolve(_ o: CLIOptions, _ s: LayoutSettings) -> (grid: GridSize, seed: Int, border: Bool) {
-        (o.grid ?? s.grid ?? CLIOptions.defaultGrid, o.seed ?? s.seed ?? CLIOptions.defaultSeed, o.border || s.border)
+    struct Settings: Equatable {
+        var grid: GridSize
+        var seed: Int
+        var border: Bool
+        var map: MapTheme
+    }
+
+    static func resolve(_ o: CLIOptions, _ s: LayoutSettings) -> Settings {
+        Settings(grid: o.grid ?? s.grid ?? CLIOptions.defaultGrid, seed: o.seed ?? s.seed ?? CLIOptions.defaultSeed,
+                 border: o.border || s.border, map: o.map ?? s.map ?? .sapporo)
     }
 
     /// Resolves `@path` / `@-` to the file's or stdin's contents; other values are the layout itself.

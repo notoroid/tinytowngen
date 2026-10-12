@@ -64,7 +64,7 @@ public enum VariantSheet {
             let ox = gap + (i % cols) * cellW, oy = gap + (i / cols) * cellH
             if case .half(let side) = kind {
                 // Show the half where it sits inside a tile.
-                sheet.fillRect(x: ox, y: oy, w: t, h: t, color: Metrics.groundColor)
+                sheet.fillRect(x: ox, y: oy, w: t, h: t, color: atlas.theme.groundColor)
                 let r = Metrics.halfRect(side)
                 sheet.blitFit(atlas.image, rect, dx: ox + r.x, dy: oy + r.y, dw: r.w, dh: r.h)
             } else {
